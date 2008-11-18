@@ -412,7 +412,7 @@ describe "mod_passenger running in Apache 2" do
 	    @stub = setup_rails_stub('mycook')
 			rails_dir = File.expand_path(@stub.app_root) + "/public/welcome"
 			@apache2.add_vhost('mycook.passenger.test', rails_dir) do |vhost|
-				vhost << "RailsAppRoot #{File.expand_path(@stub.app_root)}"
+				vhost << "RailsAppRoot \"#{File.expand_path(@stub.app_root)}\""
 			end
 			@apache2.start
 			
@@ -423,7 +423,7 @@ describe "mod_passenger running in Apache 2" do
       @stub.destroy
     end
     
-    it "servers Rails requests as usual" do
+    it "serves Rails requests as usual" do
       get('/').should =~ /MyCook/
     end
     

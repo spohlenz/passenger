@@ -147,11 +147,14 @@ public:
 			}
 		}
 		
-		if (shouldAutoDetectRails() && verifyRailsDir(ap_document_root(r))) {
-			baseURIKnown = true;
-			baseURI = "/";
-			appType = RAILS;
-			return baseURI;
+		if (shouldAutoDetectRails()) {
+			if (verifyRailsDir(ap_document_root(r)) ||
+			    (config->railsAppRoot && verifyRailsDir(string(config->railsAppRoot) + "/config"))) {
+				baseURIKnown = true;
+				baseURI = "/";
+				appType = RAILS;
+				return baseURI;
+			}
 		}
 		if (shouldAutoDetectRack() && verifyRackDir(ap_document_root(r))) {
 			baseURIKnown = true;
@@ -202,6 +205,27 @@ public:
 			return path;
 		} else {
 			return "";
+		}
+	}
+	
+	/**
+	 * Returns the 'application root' directory of the Rails/Rack application
+	 * that's associated with the HTTP request.
+	 *
+	 * Returns the value of RailsAppRoot if it has been set, otherwise defaults
+	 * to the directory immediately above the document root.
+	 *
+	 * @throws FileSystemException An error occured while examening the filesystem.
+	 */
+	string getAppRoot() {
+		if (!baseURIKnown) {
+			getBaseURI();
+		}
+		
+		if (getApplicationType() == RAILS && config->railsAppRoot != NULL) {
+			return string(config->railsAppRoot);
+		} else {
+			return getPublicDirectory() + "/..";
 		}
 	}
 	

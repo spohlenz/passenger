@@ -65,6 +65,7 @@ passenger_config_create_dir(apr_pool_t *p, char *dirspec) {
 	config->allowModRewrite = DirConfig::UNSET;
 	config->railsEnv = NULL;
 	config->rackEnv = NULL;
+	config->railsAppRoot = NULL;
 	config->spawnMethod = DirConfig::SM_UNSET;
 	config->frameworkSpawnerTimeout = -1;
 	config->appSpawnerTimeout = -1;
@@ -99,6 +100,7 @@ passenger_config_merge_dir(apr_pool_t *p, void *basev, void *addv) {
 	config->allowModRewrite = (add->allowModRewrite == DirConfig::UNSET) ? base->allowModRewrite : add->allowModRewrite;
 	config->railsEnv = (add->railsEnv == NULL) ? base->railsEnv : add->railsEnv;
 	config->rackEnv = (add->rackEnv == NULL) ? base->rackEnv : add->rackEnv;
+	config->railsAppRoot = (add->railsAppRoot == NULL) ? base->railsAppRoot : add->railsAppRoot;
 	config->spawnMethod = (add->spawnMethod == DirConfig::SM_UNSET) ? base->spawnMethod : add->spawnMethod;
 	config->frameworkSpawnerTimeout = (add->frameworkSpawnerTimeout == -1) ? base->frameworkSpawnerTimeout : add->frameworkSpawnerTimeout;
 	config->appSpawnerTimeout = (add->appSpawnerTimeout == -1) ? base->appSpawnerTimeout : add->appSpawnerTimeout;
@@ -379,6 +381,13 @@ cmd_rails_env(cmd_parms *cmd, void *pcfg, const char *arg) {
 }
 
 static const char *
+cmd_rails_app_root(cmd_parms *cmd, void *pcfg, const char *arg) {
+	DirConfig *config = (DirConfig *) pcfg;
+	config->railsAppRoot = arg;
+	return NULL;
+}
+
+static const char *
 cmd_rails_spawn_method(cmd_parms *cmd, void *pcfg, const char *arg) {
 	DirConfig *config = (DirConfig *) pcfg;
 	if (strcmp(arg, "smart") == 0) {
@@ -568,6 +577,11 @@ const command_rec passenger_commands[] = {
 		NULL,
 		OR_OPTIONS | ACCESS_CONF | RSRC_CONF,
 		"The environment under which a Rails app must run."),
+	AP_INIT_TAKE1("RailsAppRoot",
+		(Take1Func) cmd_rails_app_root,
+		NULL,
+		OR_OPTIONS | ACCESS_CONF | RSRC_CONF,
+		"Overrides the Rails application root"),
 	AP_INIT_TAKE1("RailsSpawnMethod",
 		(Take1Func) cmd_rails_spawn_method,
 		NULL,

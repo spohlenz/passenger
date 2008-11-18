@@ -76,6 +76,10 @@
 			 * Rack applications should operate. */
 			const char *rackEnv;
 			
+			/** Use a custom application root if set (otherwise the directory
+			 * immediately above the document root is used) */
+			const char *railsAppRoot;
+			
 			/** The Rails spawn method to use. */
 			SpawnMethod spawnMethod;
 			
