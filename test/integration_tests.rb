@@ -408,8 +408,8 @@ describe "mod_passenger running in Apache 2" do
 	end
 	
 	describe "custom app root" do
-	  before :all do
-	    @stub = setup_rails_stub('mycook')
+		before :all do
+			@stub = setup_rails_stub('mycook')
 			rails_dir = File.expand_path(@stub.app_root) + "/public/welcome"
 			@apache2.add_vhost('mycook.passenger.test', rails_dir) do |vhost|
 				vhost << "RailsAppRoot \"#{File.expand_path(@stub.app_root)}\""
@@ -417,20 +417,20 @@ describe "mod_passenger running in Apache 2" do
 			@apache2.start
 			
 			@server = "http://mycook.passenger.test:#{@apache2.port}"
-    end
-    
-    after :all do
-      @stub.destroy
-    end
-    
-    it "serves Rails requests as usual" do
-      get('/').should =~ /MyCook/
-    end
-    
-    it "uses the specified document root" do
-      get('/cached.html').should =~ /cached/
-    end
-  end
+		end
+		
+		after :all do
+			@stub.destroy
+		end
+		
+		it "serves Rails requests as usual" do
+			get('/').should =~ /MyCook/
+		end
+		
+		it "uses the specified document root" do
+			get('/cached.html').should =~ /cached/
+		end
+	end
 	
 	describe "error handling" do
 		before :all do
