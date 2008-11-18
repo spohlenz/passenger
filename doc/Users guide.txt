@@ -870,6 +870,20 @@ This option may occur in the following places:
 
 In each place, it may be specified at most once. The default value is 'production'.
 
+[[rails_app_root]]
+==== RailsAppRoot <string> ====
+This option allows one to override the location of the Rails application root directory.
+
+This option may occur in the following places:
+
+ * In the global server configuration.
+ * In a virtual host configuration block.
+ * In a `<Directory>` or `<Location>` block.
+ * In '.htaccess', if `AllowOverride Options` is on.
+
+In each place, it may be specified at most once. The default behavior is to search for
+a Rails directory immediately above the virtual host's `DocumentRoot`.
+
 [[RailsSpawnMethod]]
 ==== RailsSpawnMethod <string> ====
 [TIP]
