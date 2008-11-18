@@ -147,14 +147,11 @@ public:
 			}
 		}
 		
-		if (shouldAutoDetectRails()) {
-			if (verifyRailsDir(string(ap_document_root(r)) + "/..") ||
-			    (config->railsAppRoot && verifyRailsDir(config->railsAppRoot))) {
-				baseURIKnown = true;
-				baseURI = "/";
-				appType = RAILS;
-				return baseURI;
-			}
+		if (shouldAutoDetectRails() && (config->railsAppRoot || verifyRailsDir(ap_document_root(r)))) {
+			baseURIKnown = true;
+			baseURI = "/";
+			appType = RAILS;
+			return baseURI;
 		}
 		if (shouldAutoDetectRack() && verifyRackDir(ap_document_root(r))) {
 			baseURIKnown = true;
