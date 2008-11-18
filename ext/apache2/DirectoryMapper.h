@@ -148,8 +148,8 @@ public:
 		}
 		
 		if (shouldAutoDetectRails()) {
-			if (verifyRailsDir(ap_document_root(r)) ||
-			    (config->railsAppRoot && verifyRailsDir(string(config->railsAppRoot) + "/config"))) {
+			if (verifyRailsDir(string(ap_document_root(r)) + "/..") ||
+			    (config->railsAppRoot && verifyRailsDir(config->railsAppRoot))) {
 				baseURIKnown = true;
 				baseURI = "/";
 				appType = RAILS;

@@ -174,7 +174,7 @@ canonicalizePath(const string &path) {
 bool
 verifyRailsDir(const string &dir) {
 	string temp(dir);
-	temp.append("/../config/environment.rb");
+	temp.append("/config/environment.rb");
 	return fileExists(temp.c_str());
 }
 
