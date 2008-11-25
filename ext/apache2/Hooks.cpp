@@ -387,7 +387,7 @@ private:
 				ServerConfig *sconfig = getServerConfig(r->server);
 				string appRoot(canonicalizePath(mapper.getAppRoot()));
 				
-				session = applicationPool->get(SpawnOptions(
+				session = applicationPool->get(PoolOptions(
 					appRoot,
 					true,
 					sconfig->getDefaultUser(),
@@ -397,7 +397,8 @@ private:
 					config->frameworkSpawnerTimeout,
 					config->appSpawnerTimeout,
 					config->getMaxRequests(),
-					config->getMemoryLimit()));
+					config->getMemoryLimit(),
+					config->usingGlobalQueue()));
 				P_TRACE(3, "Forwarding " << r->uri << " to PID " << session->getPid());
 			} catch (const SpawnException &e) {
 				r->status = 500;
@@ -685,6 +686,17 @@ public:
 		const char *ruby, *user;
 		string applicationPoolServerExe, spawnServer;
 		
+		/*
+		 * As described in the comment in init_module, upon (re)starting
+		 * Apache, the Hooks constructor is called twice. We unset
+		 * PHUSION_PASSENGER_TMP before calling createPassengerTmpDir()
+		 * because we want the temp directory's name to contain the PID
+		 * of the process in which the Hooks constructor was called for
+		 * the second time.
+		 */
+		unsetenv("PHUSION_PASSENGER_TMP");
+		createPassengerTempDir();
+		
 		ruby = (config->ruby != NULL) ? config->ruby : DEFAULT_RUBY_COMMAND;
 		if (config->userSwitching) {
 			user = "";
@@ -725,6 +737,10 @@ public:
 		);
 	}
 	
+	~Hooks() {
+		removeDirTree(getPassengerTempDir().c_str());
+	}
+	
 	void initChild(apr_pool_t *pchild, server_rec *s) {
 		ServerConfig *config = getServerConfig(s);
 		
@@ -734,7 +750,6 @@ public:
 			applicationPool->setMax(config->maxPoolSize);
 			applicationPool->setMaxPerApp(config->maxInstancesPerApp);
 			applicationPool->setMaxIdleTime(config->poolIdleTime);
-			applicationPool->setUseGlobalQueue(config->getUseGlobalQueue());
 		} catch (const thread_interrupted &) {
 			P_TRACE(3, "A system call was interrupted during initialization of "
 				"an Apache child process. Apache is probably restarting or "

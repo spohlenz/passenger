@@ -300,12 +300,6 @@ private:
 			channel.write("setMaxPerApp", toString(max).c_str(), NULL);
 		}
 		
-		virtual void setUseGlobalQueue(bool value) {
-			MessageChannel channel(data->server);
-			boost::mutex::scoped_lock l(data->lock);
-			channel.write("setUseGlobalQueue", value ? "true" : "false", NULL);
-		}
-		
 		virtual pid_t getSpawnServerPid() const {
 			this_thread::disable_syscall_interruption dsi;
 			MessageChannel channel(data->server);
@@ -317,7 +311,7 @@ private:
 			return atoi(args[0].c_str());
 		}
 		
-		virtual Application::SessionPtr get(const SpawnOptions &spawnOptions) {
+		virtual Application::SessionPtr get(const PoolOptions &options) {
 			this_thread::disable_syscall_interruption dsi;
 			TRACE_POINT();
 			
@@ -331,7 +325,7 @@ private:
 				vector<string> args;
 				
 				args.push_back("get");
-				spawnOptions.toVector(args);
+				options.toVector(args);
 				channel.write(args);
 			} catch (const SystemException &) {
 				UPDATE_TRACE_POINT();
@@ -533,8 +527,10 @@ private:
 		char filename[PATH_MAX];
 		int ret;
 		
-		snprintf(filename, sizeof(filename), "/tmp/passenger_status.%lu.fifo",
-				(unsigned long) getpid());
+		createPassengerTempDir();
+		
+		snprintf(filename, sizeof(filename), "%s/status.fifo",
+				getPassengerTempDir().c_str());
 		filename[PATH_MAX - 1] = '\0';
 		do {
 			ret = mkfifo(filename, S_IRUSR | S_IWUSR);

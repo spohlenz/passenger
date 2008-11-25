@@ -42,19 +42,17 @@ class ApplicationSpawner
 	#   exit() during startup.
 	# - SystemCallError, IOError, SocketError: Something went wrong.
 	def spawn_application(app_root, options = {})
-		options = {
-			"lower_privilege" => true,
-			"lowest_user"     => "nobody",
-			"environment"     => "production"
-		}.merge(options)
+		options = sanitize_spawn_options(options)
 		
 		a, b = UNIXSocket.pair
-		# Double fork in order to prevent zombie processes.
-		pid = safe_fork(self.class.to_s) do
-			safe_fork(self.class.to_s) do
-				a.close
-				run(MessageChannel.new(b), app_root, options)
-			end
+		pid = safe_fork(self.class.to_s, true) do
+			a.close
+			
+			file_descriptors_to_leave_open = [0, 1, 2, b.fileno]
+			NativeSupport.close_all_file_descriptors(file_descriptors_to_leave_open)
+			close_all_io_objects_for_fds(file_descriptors_to_leave_open)
+			
+			run(MessageChannel.new(b), app_root, options)
 		end
 		b.close
 		Process.waitpid(pid) rescue nil
@@ -63,13 +61,13 @@ class ApplicationSpawner
 		unmarshal_and_raise_errors(channel, "rack")
 		
 		# No exception was raised, so spawning succeeded.
-		pid, socket_name, using_abstract_namespace = channel.read
+		pid, socket_name, socket_type = channel.read
 		if pid.nil?
 			raise IOError, "Connection closed"
 		end
 		owner_pipe = channel.recv_io
 		return Application.new(@app_root, pid, socket_name,
-			using_abstract_namespace == "true", owner_pipe)
+			socket_type, owner_pipe)
 	end
 
 private
@@ -92,7 +90,7 @@ private
 			begin
 				handler = RequestHandler.new(reader, app, options)
 				channel.write(Process.pid, handler.socket_name,
-					handler.using_abstract_namespace?)
+					handler.socket_type)
 				channel.send_io(writer)
 				writer.close
 				channel.close

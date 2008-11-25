@@ -41,24 +41,26 @@ class ApplicationSpawner
 	# - SystemCallError, IOError, SocketError: Something went wrong.
 	def spawn_application(app_root, lower_privilege = true, lowest_user = "nobody", environment = "production")
 		a, b = UNIXSocket.pair
-		# Double fork in order to prevent zombie processes.
-		pid = safe_fork(self.class.to_s) do
-			safe_fork(self.class.to_s) do
-				a.close
-				run(MessageChannel.new(b), app_root, lower_privilege, lowest_user, environment)
-			end
+		pid = safe_fork(self.class.to_s, true) do
+			a.close
+			
+			file_descriptors_to_leave_open = [0, 1, 2, b.fileno]
+			NativeSupport.close_all_file_descriptors(file_descriptors_to_leave_open)
+			close_all_io_objects_for_fds(file_descriptors_to_leave_open)
+			
+			run(MessageChannel.new(b), app_root, lower_privilege, lowest_user, environment)
 		end
 		b.close
 		Process.waitpid(pid) rescue nil
 		
 		channel = MessageChannel.new(a)
-		pid, socket_name, using_abstract_namespace = channel.read
+		pid, socket_name, socket_type = channel.read
 		if pid.nil?
 			raise IOError, "Connection closed"
 		end
 		owner_pipe = channel.recv_io
 		return Application.new(@app_root, pid, socket_name,
-			using_abstract_namespace == "true", owner_pipe)
+			socket_type, owner_pipe)
 	end
 
 private
@@ -70,11 +72,11 @@ private
 			lower_privilege('passenger_wsgi.py', lowest_user)
 		end
 		
-		socket_file = "/tmp/passenger_wsgi.#{Process.pid}.#{rand 10000000}"
+		socket_file = "#{passenger_tmpdir}/passenger_wsgi.#{Process.pid}.#{rand 10000000}"
 		server = UNIXServer.new(socket_file)
 		begin
 			reader, writer = IO.pipe
-			channel.write(Process.pid, socket_file, "false")
+			channel.write(Process.pid, socket_file, "unix")
 			channel.send_io(writer)
 			writer.close
 			channel.close

@@ -171,6 +171,125 @@ canonicalizePath(const string &path) {
 	#endif
 }
 
+string
+escapeForXml(const string &input) {
+	string result(input);
+	string::size_type input_pos = 0;
+	string::size_type input_end_pos = input.size();
+	string::size_type result_pos = 0;
+	
+	while (input_pos < input_end_pos) {
+		const unsigned char ch = input[input_pos];
+		
+		if ((ch >= 'A' && ch <= 'z')
+		 || (ch >= '0' && ch <= '9')
+		 || ch == '/' || ch == ' ' || ch == '_' || ch == '.') {
+			// This is an ASCII character. Ignore it and
+			// go to next character.
+			result_pos++;
+		} else {
+			// Not an ASCII character; escape it.
+			char escapedCharacter[sizeof("&#255;") + 1];
+			int size;
+			
+			size = snprintf(escapedCharacter,
+				sizeof(escapedCharacter) - 1,
+				"&#%d;",
+				(int) ch);
+			if (size < 0) {
+				throw std::bad_alloc();
+			}
+			escapedCharacter[sizeof(escapedCharacter) - 1] = '\0';
+			
+			result.replace(result_pos, 1, escapedCharacter, size);
+			result_pos += size;
+		}
+		input_pos++;
+	}
+	
+	return result;
+}
+
+const char *
+getTempDir() {
+	const char *temp_dir = getenv("TMP");
+	if (temp_dir == NULL || *temp_dir == '\0') {
+		temp_dir = "/tmp";
+	}
+	return temp_dir;
+}
+
+string
+getPassengerTempDir(bool bypassCache) {
+	if (bypassCache) {
+		goto calculateResult;
+	} else {
+		const char *tmp = getenv("PHUSION_PASSENGER_TMP");
+		if (tmp != NULL && *tmp != '\0') {
+			return tmp;
+		} else {
+			goto calculateResult;
+		}
+	}
+
+	calculateResult:
+	const char *temp_dir = getTempDir();
+	char buffer[PATH_MAX];
+	
+	snprintf(buffer, sizeof(buffer), "%s/passenger.%d", temp_dir, getpid());
+	buffer[sizeof(buffer) - 1] = '\0';
+	setenv("PHUSION_PASSENGER_TMP", buffer, 1);
+	return buffer;
+}
+
+void
+createPassengerTempDir() {
+	makeDirTree(getPassengerTempDir().c_str(), "u=rwxs,g=wx,o=wx");
+}
+
+void
+makeDirTree(const char *path, const char *mode) {
+	char command[PATH_MAX + 10];
+	snprintf(command, sizeof(command), "mkdir -p -m \"%s\" \"%s\"", mode, path);
+	command[sizeof(command) - 1] = '\0';
+	
+	int result;
+	do {
+		result = system(command);
+	} while (result == -1 && errno == EINTR);
+	if (result != 0) {
+		char message[1024];
+		int e = errno;
+		
+		snprintf(message, sizeof(message) - 1, "Cannot create directory '%s'", path);
+		message[sizeof(message) - 1] = '\0';
+		if (result == -1) {
+			throw SystemException(message, e);
+		} else {
+			throw IOException(message);
+		}
+	}
+}
+
+void
+removeDirTree(const char *path) {
+	char command[PATH_MAX + 10];
+	snprintf(command, sizeof(command), "rm -rf \"%s\"", path);
+	command[sizeof(command) - 1] = '\0';
+	
+	int result;
+	do {
+		result = system(command);
+	} while (result == -1 && errno == EINTR);
+	if (result == -1) {
+		char message[1024];
+		
+		snprintf(message, sizeof(message) - 1, "Cannot create directory '%s'", path);
+		message[sizeof(message) - 1] = '\0';
+		throw IOException(message);
+	}
+}
+
 bool
 verifyRailsDir(const string &dir) {
 	string temp(dir);

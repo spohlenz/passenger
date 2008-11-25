@@ -110,18 +110,21 @@ private:
 				}
 				
 				UPDATE_TRACE_POINT();
+				MessageChannel channel(fileno(f));
 				string report;
 				report.append("----------- Backtraces -----------\n");
 				report.append(oxt::thread::all_backtraces());
 				report.append("\n\n");
 				report.append(pool.toString());
 				
-				fwrite(report.c_str(), 1, report.size(), f);
-				syscalls::fclose(f);
-				
-				// Prevent sending too much data at once.
 				UPDATE_TRACE_POINT();
-				sleep(1);
+				try {
+					channel.writeScalar(report);
+					channel.writeScalar(pool.toXml());
+				} catch (...) {
+					// Ignore write errors.
+				}
+				syscalls::fclose(f);
 			}
 		} catch (const boost::thread_interrupted &) {
 			P_TRACE(2, "Status report thread interrupted.");
@@ -231,7 +234,7 @@ private:
 		bool failed = false;
 		
 		try {
-			SpawnOptions options(args, 1);
+			PoolOptions options(args, 1);
 			session = server.pool.get(options);
 			sessions[lastSessionID] = session;
 			lastSessionID++;
@@ -315,11 +318,6 @@ private:
 		server.pool.setMaxPerApp(maxPerApp);
 	}
 	
-	void processSetUseGlobalQueue(bool value) {
-		TRACE_POINT();
-		server.pool.setUseGlobalQueue(value);
-	}
-	
 	void processGetSpawnServerPid(const vector<string> &args) {
 		TRACE_POINT();
 		channel.write(toString(server.pool.getSpawnServerPid()).c_str(), NULL);
@@ -377,8 +375,6 @@ private:
 					processGetCount(args);
 				} else if (args[0] == "setMaxPerApp" && args.size() == 2) {
 					processSetMaxPerApp(atoi(args[1]));
-				} else if (args[0] == "setUseGlobalQueue" && args.size() == 2) {
-					processSetUseGlobalQueue(args[1] == "true");
 				} else if (args[0] == "getSpawnServerPid" && args.size() == 1) {
 					processGetSpawnServerPid(args);
 				} else {

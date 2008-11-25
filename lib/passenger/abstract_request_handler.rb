@@ -18,8 +18,8 @@
 
 require 'socket'
 require 'fcntl'
+require 'passenger/message_channel'
 require 'passenger/utils'
-require 'passenger/native_support'
 module Passenger
 
 # The request handler is the layer which connects Apache with the underlying application's
@@ -38,21 +38,6 @@ module Passenger
 # Some design decisions are made because we want to decrease system
 # administrator maintenance overhead. These decisions are documented
 # in this section.
-#
-# === Abstract namespace Unix sockets
-#
-# AbstractRequestHandler listens on a Unix socket for incoming requests. If possible,
-# AbstractRequestHandler will try to create a Unix socket on the _abstract namespace_,
-# instead of on the filesystem. If the RoR application crashes (segfault),
-# or if it gets killed by SIGKILL, or if the system loses power, then there
-# will be no stale socket files left on the filesystem.
-# Unfortunately, abstract namespace Unix sockets are only supported by Linux.
-# On systems that do not support abstract namespace Unix sockets,
-# AbstractRequestHandler will automatically fallback to using regular Unix socket files.
-#
-# It is possible to force AbstractRequestHandler to use regular Unix socket files by
-# setting the environment variable PASSENGER_NO_ABSTRACT_NAMESPACE_SOCKETS
-# to 1.
 #
 # === Owner pipes
 #
@@ -109,16 +94,19 @@ class AbstractRequestHandler
 	CONTENT_LENGTH      = 'CONTENT_LENGTH'      # :nodoc:
 	HTTP_CONTENT_LENGTH = 'HTTP_CONTENT_LENGTH' # :nodoc:
 	X_POWERED_BY        = 'X-Powered-By'        # :nodoc:
+	REQUEST_METHOD      = 'REQUEST_METHOD'      # :nodoc:
+	PING                = 'ping'                # :nodoc:
 	
 	# The name of the socket on which the request handler accepts
-	# new connections. This is either a Unix socket filename, or
-	# the name for an abstract namespace Unix socket.
+	# new connections. At this moment, this value is always the filename
+	# of a Unix domain socket.
 	#
-	# If +socket_name+ refers to an abstract namespace Unix socket,
-	# then the name does _not_ contain a leading null byte.
-	#
-	# See also using_abstract_namespace?
+	# See also #socket_type.
 	attr_reader :socket_name
+	
+	# The type of socket that #socket_name refers to. At the moment, the
+	# value is always 'unix', which indicates a Unix domain socket.
+	attr_reader :socket_type
 	
 	# Specifies the maximum allowed memory usage, in MB. If after having processed
 	# a request AbstractRequestHandler detects that memory usage has risen above
@@ -142,15 +130,9 @@ class AbstractRequestHandler
 	# Additionally, the following options may be given:
 	# - memory_limit: Used to set the +memory_limit+ attribute.
 	def initialize(owner_pipe, options = {})
-		if abstract_namespace_sockets_allowed?
-			@using_abstract_namespace = create_unix_socket_on_abstract_namespace
-		else
-			@using_abstract_namespace = false
-		end
-		if !@using_abstract_namespace
-			create_unix_socket_on_filesystem
-		end
-		@socket.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC)
+		@socket_type = 'unix'
+		create_unix_socket_on_filesystem
+		@socket.close_on_exec!
 		@owner_pipe = owner_pipe
 		@previous_signal_handlers = {}
 		@main_loop_thread_lock = Mutex.new
@@ -174,14 +156,7 @@ class AbstractRequestHandler
 		end
 		@socket.close rescue nil
 		@owner_pipe.close rescue nil
-		if !using_abstract_namespace?
-			File.unlink(@socket_name) rescue nil
-		end
-	end
-	
-	# Returns whether socket_name refers to an abstract namespace Unix socket.
-	def using_abstract_namespace?
-		return @using_abstract_namespace
+		File.unlink(@socket_name) rescue nil
 	end
 	
 	# Check whether the main loop's currently running.
@@ -201,8 +176,8 @@ class AbstractRequestHandler
 		reset_signal_handlers
 		begin
 			@graceful_termination_pipe = IO.pipe
-			@graceful_termination_pipe[0].fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC)
-			@graceful_termination_pipe[1].fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC)
+			@graceful_termination_pipe[0].close_on_exec!
+			@graceful_termination_pipe[1].close_on_exec!
 			
 			@main_loop_thread_lock.synchronize do
 				@main_loop_running = true
@@ -220,7 +195,11 @@ class AbstractRequestHandler
 				begin
 					headers, input = parse_request(client)
 					if headers
-						process_request(headers, input, client)
+						if headers[REQUEST_METHOD] == PING
+							process_ping(headers, input, client)
+						else
+							process_request(headers, input, client)
+						end
 					end
 				rescue IOError, SocketError, SystemCallError => e
 					print_exception("Passenger RequestHandler", e)
@@ -228,9 +207,6 @@ class AbstractRequestHandler
 					client.close rescue nil
 				end
 				@processed_requests += 1
-				if @memory_limit > 0 && get_memory_usage > @memory_limit
-					@graceful_termination_pipe[1].close rescue nil
-				end
 			end
 		rescue EOFError
 			# Exit main loop.
@@ -271,39 +247,17 @@ class AbstractRequestHandler
 private
 	include Utils
 
-	def create_unix_socket_on_abstract_namespace
-		while true
-			begin
-				# I have no idea why, but using base64-encoded IDs
-				# don't pass the unit tests. I couldn't find the cause
-				# of the problem. The system supports base64-encoded
-				# names for abstract namespace unix sockets just fine.
-				@socket_name = generate_random_id(:hex)
-				@socket_name = @socket_name.slice(0, NativeSupport::UNIX_PATH_MAX - 2)
-				fd = NativeSupport.create_unix_socket("\x00#{socket_name}", BACKLOG_SIZE)
-				@socket = IO.new(fd)
-				@socket.instance_eval do
-					def accept
-						fd = NativeSupport.accept(fileno)
-						return IO.new(fd)
-					end
-				end
-				return true
-			rescue Errno::EADDRINUSE
-				# Do nothing, try again with another name.
-			rescue Errno::ENOENT
-				# Abstract namespace sockets not supported on this system.
-				return false
-			end
-		end
-	end
-	
 	def create_unix_socket_on_filesystem
 		done = false
 		while !done
 			begin
-				@socket_name = "/tmp/passenger.#{generate_random_id(:base64)}"
-				@socket_name = @socket_name.slice(0, NativeSupport::UNIX_PATH_MAX - 1)
+				if defined?(NativeSupport)
+					unix_path_max = NativeSupport::UNIX_PATH_MAX
+				else
+					unix_path_max = 100
+				end
+				@socket_name = "#{passenger_tmpdir}/passenger_backend.#{generate_random_id(:base64)}"
+				@socket_name = @socket_name.slice(0, unix_path_max - 1)
 				@socket = UNIXServer.new(@socket_name)
 				File.chmod(0600, @socket_name)
 				done = true
@@ -317,7 +271,7 @@ private
 	# special handlers for a few signals. The previous signal handlers
 	# will be put back by calling revert_signal_handlers.
 	def reset_signal_handlers
-		Signal.list.each_key do |signal|
+		Signal.list_trappable.each_key do |signal|
 			begin
 				prev_handler = trap(signal, DEFAULT)
 				if prev_handler != DEFAULT
@@ -331,12 +285,16 @@ private
 	end
 	
 	def install_useful_signal_handlers
+		trappable_signals = Signal.list_trappable
+		
 		trap(SOFT_TERMINATION_SIGNAL) do
 			@graceful_termination_pipe[1].close rescue nil
-		end
+		end if trappable_signals.has_key?(SOFT_TERMINATION_SIGNAL.sub(/^SIG/, ''))
+		
 		trap('ABRT') do
 			raise SignalException, "SIGABRT"
-		end
+		end if trappable_signals.has_key?('ABRT')
+		
 		trap('QUIT') do
 			if Kernel.respond_to?(:caller_for_all_threads)
 				output = "========== Process #{Process.pid}: backtrace dump ==========\n"
@@ -362,7 +320,7 @@ private
 			end
 			STDERR.puts(output)
 			STDERR.flush
-		end
+		end if trappable_signals.has_key?('QUIT')
 	end
 	
 	def revert_signal_handlers
@@ -375,7 +333,7 @@ private
 		ios = select([@socket, @owner_pipe, @graceful_termination_pipe[0]]).first
 		if ios.include?(@socket)
 			client = @socket.accept
-			client.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC)
+			client.close_on_exec!
 			
 			# The real input stream is not seekable (calling _seek_
 			# or _rewind_ on it will raise an exception). But some
@@ -418,6 +376,10 @@ private
 		print_exception("Passenger RequestHandler", e)
 	end
 	
+	def process_ping(env, input, output)
+		output.write("pong")
+	end
+	
 	# Generate a long, cryptographically secure random ID string, which
 	# is also a valid filename.
 	def generate_random_id(method)
@@ -435,11 +397,6 @@ private
 		return data
 	end
 	
-	def abstract_namespace_sockets_allowed?
-		return !ENV['PASSENGER_NO_ABSTRACT_NAMESPACE_SOCKETS'] ||
-			ENV['PASSENGER_NO_ABSTRACT_NAMESPACE_SOCKETS'].empty?
-	end
-
 	def self.determine_passenger_version
 		rakefile = "#{File.dirname(__FILE__)}/../../Rakefile"
 		if File.exist?(rakefile)

@@ -119,6 +119,9 @@
 			
 			Threeway highPerformance;
 			
+			/** Whether global queuing should be used. */
+			Threeway useGlobalQueue;
+			
 			bool isEnabled() const {
 				return enabled != DISABLED;
 			}
@@ -171,6 +174,10 @@
 			bool highPerformanceMode() const {
 				return highPerformance == ENABLED;
 			}
+			
+			bool usingGlobalQueue() const {
+				return useGlobalQueue == ENABLED;
+			}
 		};
 		
 		/**
@@ -213,13 +220,6 @@
 			 * this server config. */
 			bool poolIdleTimeSpecified;
 			
-			/** Whether global queuing should be used. */
-			bool useGlobalQueue;
-			
-			/** Whether the useGlobalQueue option was explicitly specified
-			 * in this server config. */
-			bool useGlobalQueueSpecified;
-			
 			/** Whether user switching support is enabled. */
 			bool userSwitching;
 			
@@ -231,14 +231,6 @@
 			 * fails or is disabled. NULL means the option is not specified.
 			 */
 			const char *defaultUser;
-			
-			bool getUseGlobalQueue() const {
-				if (useGlobalQueueSpecified) {
-					return useGlobalQueue;
-				} else {
-					return false;
-				}
-			}
 			
 			const char *getDefaultUser() const {
 				if (defaultUser != NULL) {

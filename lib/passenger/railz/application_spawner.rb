@@ -87,11 +87,7 @@ class ApplicationSpawner < AbstractServer
 		rescue InvalidPath
 			raise
 		end
-		@options = {
-			"lower_privilege" => true,
-			"lowest_user"     => "nobody",
-			"environment"     => "production"
-		}.merge(options)
+		@options = sanitize_spawn_options(options)
 		@lower_privilege = @options["lower_privilege"]
 		@lowest_user     = @options["lowest_user"]
 		@environment     = @options["environment"]
@@ -108,13 +104,13 @@ class ApplicationSpawner < AbstractServer
 	# - ApplicationSpawner::Error: The ApplicationSpawner server exited unexpectedly.
 	def spawn_application
 		server.write("spawn_application")
-		pid, socket_name, using_abstract_namespace = server.read
+		pid, socket_name, socket_type = server.read
 		if pid.nil?
 			raise IOError, "Connection closed"
 		end
 		owner_pipe = server.recv_io
 		return Application.new(@app_root, pid, socket_name,
-			using_abstract_namespace == "true", owner_pipe)
+			socket_type, owner_pipe)
 	rescue SystemCallError, IOError, SocketError => e
 		raise Error, "The application spawner server exited unexpectedly"
 	end
@@ -134,31 +130,33 @@ class ApplicationSpawner < AbstractServer
 	#   or called exit() during startup.
 	# - SystemCallError, IOError, SocketError: Something went wrong.
 	def spawn_application!
-		# Double fork to prevent zombie processes.
 		a, b = UNIXSocket.pair
-		pid = safe_fork(self.class.to_s) do
-			safe_fork('application') do
-				begin
-					a.close
-					channel = MessageChannel.new(b)
-					success = report_app_init_status(channel) do
-						ENV['RAILS_ENV'] = @environment
-						Dir.chdir(@app_root)
-						if @lower_privilege
-							lower_privilege('config/environment.rb', @lowest_user)
-						end
-						remove_phusion_passenger_namespace
-						require 'config/environment'
-						require 'dispatcher'
+		pid = safe_fork('application', true) do
+			begin
+				a.close
+				
+				file_descriptors_to_leave_open = [0, 1, 2, b.fileno]
+				NativeSupport.close_all_file_descriptors(file_descriptors_to_leave_open)
+				close_all_io_objects_for_fds(file_descriptors_to_leave_open)
+				
+				channel = MessageChannel.new(b)
+				success = report_app_init_status(channel) do
+					ENV['RAILS_ENV'] = @environment
+					Dir.chdir(@app_root)
+					if @lower_privilege
+						lower_privilege('config/environment.rb', @lowest_user)
 					end
-					if success
-						start_request_handler(channel)
-					end
-				rescue SignalException => e
-					if e.message != AbstractRequestHandler::HARD_TERMINATION_SIGNAL &&
-					   e.message != AbstractRequestHandler::SOFT_TERMINATION_SIGNAL
-						raise
-					end
+					remove_phusion_passenger_namespace
+					require 'config/environment'
+					require 'dispatcher'
+				end
+				if success
+					start_request_handler(channel)
+				end
+			rescue SignalException => e
+				if e.message != AbstractRequestHandler::HARD_TERMINATION_SIGNAL &&
+				   e.message != AbstractRequestHandler::SOFT_TERMINATION_SIGNAL
+					raise
 				end
 			end
 		end
@@ -169,13 +167,13 @@ class ApplicationSpawner < AbstractServer
 		unmarshal_and_raise_errors(channel)
 		
 		# No exception was raised, so spawning succeeded.
-		pid, socket_name, using_abstract_namespace = channel.read
+		pid, socket_name, socket_type = channel.read
 		if pid.nil?
 			raise IOError, "Connection closed"
 		end
 		owner_pipe = channel.recv_io
 		return Application.new(@app_root, pid, socket_name,
-			using_abstract_namespace == "true", owner_pipe)
+			socket_type, owner_pipe)
 	end
 	
 	# Overrided from AbstractServer#start.
@@ -272,7 +270,11 @@ private
 		if !defined?(Dispatcher)
 			require 'dispatcher'
 		end
-		require_dependency 'application'
+		if File.exist?('app/controllers/application_controller.rb')
+			require_dependency 'application_controller'
+		else
+			require_dependency 'application'
+		end
 		
 		# - No point in preloading the application sources if the garbage collector
 		#   isn't copy-on-write friendly.
@@ -314,7 +316,7 @@ private
 			reader.fcntl(Fcntl::F_SETFD, Fcntl::FD_CLOEXEC)
 			handler = RequestHandler.new(reader, @options)
 			channel.write(Process.pid, handler.socket_name,
-				handler.using_abstract_namespace?)
+				handler.socket_type)
 			channel.send_io(writer)
 			writer.close
 			channel.close
